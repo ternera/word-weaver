@@ -1,112 +1,77 @@
-// Word Weaver - A Devvit App
+``typescript
 import { Devvit } from '@devvit/public-api';
 
-// Define the state of the game
-interface GameState {
-    currentWord: string;      // The current word in the chain
-    wordChain: string[];      // The chain of words built so far
-    usedLetters: Set<string>; // Letters used in the chain
-    playerScores: Record<string, number>; // Player scores
-    currentPlayer: string;    // The current player's ID
-    timeLimit: number;        // Time limit for each turn (ms)
-}
+// ... (keep your existing interfaces and helper functions)
 
-const INITIAL_STATE: GameState = {
-    currentWord: '',
-    wordChain: [],
-    usedLetters: new Set<string>(),
-    playerScores: {},
-    currentPlayer: '',
-    timeLimit: 30000, // 30 seconds
-};
-
-let gameState: GameState = { ...INITIAL_STATE };
-
-// Helper function to check if the new word is valid
-function isWordValid(word: string, state: GameState): boolean {
-    if (state.wordChain.includes(word)) {
-        return false; // Word has already been used
-    }
-    for (const letter of word) {
-        if (state.currentWord.includes(letter)) {
-            return true; // Shares at least one letter
-        }
-    }
-    return false;
-}
-
-// Function to calculate score based on word length
-function calculateScore(word: string): number {
-    return word.length; // Simple scoring based on length
-}
-
-// Initialize the app
+// Define the custom post type
 Devvit.addCustomPostType({
-    onStart: ({ context, input }) => {
-        const startingWord = input?.startingWord || 'start';
-        gameState.currentWord = startingWord;
-        gameState.wordChain = [startingWord];
-        gameState.usedLetters = new Set([...startingWord]);
-        return {
-            message: `Game started with the word: ${startingWord}`,
-        };
-    },
+  name: 'WordWeaver',
+  render: (context) => {
+    // Render your game UI here
+    return (
+      <vstack>
+        <text>Current word: {gameState.currentWord}</text>
+        <text>Word chain: {gameState.wordChain.join(', ')}</text>
+        <text>Current player: {gameState.currentPlayer}</text>
+        {/* Add more UI elements as needed */}
+      </vstack>
+    );
+  },
+});
 
-    onAction: async ({ context, input }) => {
-        const playerId = context.user.id;
-        const newWord = input?.word;
+// Add a trigger for starting the game
+Devvit.addTrigger({
+  event: 'PostCreate',
+  filter: { postType: 'WordWeaver' },
+  onEvent: (event, context) => {
+    const startingWord = event.post.title || 'start';
+    gameState = {
+      ...INITIAL_STATE,
+      currentWord: startingWord,
+      wordChain: [startingWord],
+      usedLetters: new Set([...startingWord]),
+    };
+    context.reddit.updatePost(event.post.id, {
+      title: Word Weaver: ${startingWord}`,
+    });
+  },
+});
+// Add a trigger for player actions
+Devvit.addTrigger({
+  event: 'CommentCreate',
+  filter: { postType: 'WordWeaver' },
+  onEvent: async (event, context) => {
+    const playerId = event.author.id;
+    const newWord = event.comment.body.trim();
 
-        if (!newWord) {
-            return { message: 'No word provided!' };
-        }
+    if (!isWordValid(newWord, gameState)) {
+      await context.reddit.removeComment(event.comment.id);
+      await context.reddit.replyToComment(event.comment.id, 'Invalid word! It must share at least one letter with the current word and not be reused.');
+      return;
+    }
 
-        if (!isWordValid(newWord, gameState)) {
-            return { message: 'Invalid word! It must share at least one letter with the current word and not be reused.' };
-        }
+    // Update game state
+    gameState.currentWord = newWord;
+    gameState.wordChain.push(newWord);
+    gameState.usedLetters = new Set([...gameState.usedLetters, ...newWord]);
 
-        // Update state
-        gameState.currentWord = newWord;
-        gameState.wordChain.push(newWord);
-        gameState.usedLetters = new Set([...gameState.usedLetters, ...newWord]);
+    if (!gameState.playerScores[playerId]) {
+      gameState.playerScores[playerId] = 0;
+    }
+    gameState.playerScores[playerId] += calculateScore(newWord);
 
-        if (!gameState.playerScores[playerId]) {
-            gameState.playerScores[playerId] = 0;
-        }
-        gameState.playerScores[playerId] += calculateScore(newWord);
-
-        // Switch to the next player (basic round-robin)
-        gameState.currentPlayer = Object.keys(gameState.playerScores)[
-            (Object.keys(gameState.playerScores).indexOf(playerId) + 1) %
-                Object.keys(gameState.playerScores).length
-        ];
-
-        return {
-            message: `Word accepted! The new word is '${newWord}'. Current score: ${gameState.playerScores[playerId]}.
-                      Next player: ${gameState.currentPlayer}`,
-        };
-    },
-
-    onTimeout: ({ context }) => {
-        return {
-            message: `Time's up for player ${gameState.currentPlayer}. Moving to the next player.`,
-        };
-    },
-
-    onEnd: () => {
-        const winner = Object.entries(gameState.playerScores).reduce((a, b) =>
-            b[1] > a[1] ? b : a
-        );
-
-        const leaderboard = Object.entries(gameState.playerScores)
-            .sort(([, a], [, b]) => b - a)
-            .map(([player, score]) => `${player}: ${score}`)
-            .join('\n');
-
-        return {
-            message: `Game over! Winner: ${winner[0]} with ${winner[1]} points.
-                      Leaderboard:\n${leaderboard}`,
-        };
-    },
+    // Update the post with the new game state
+    await context.reddit.updatePost(event.post.id, {
+      richtext_json: JSON.stringify({
+        document: [
+          { type: 'paragraph', children: [{ text: Current word: ${gameState.currentWord} }] },
+          { type: 'paragraph', children: [{ text: Word chain: ${gameState.wordChain.join(', ')} }] },
+          { type: 'paragraph', children: [{ text: Current player: ${gameState.currentPlayer} }] },
+        ],
+      }),
+    });
+  },
 });
 
 export default Devvit;
+``
