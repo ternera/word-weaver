@@ -41,7 +41,7 @@ function calculateScore(word: string): number {
 }
 
 // Initialize the app
-Devvit.addFunctionality({
+Devvit.addCustomPostType({
     onStart: ({ context, input }) => {
         const startingWord = input?.startingWord || 'start';
         gameState.currentWord = startingWord;
